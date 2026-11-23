@@ -33,6 +33,7 @@ python ChladniPatterns.py
 | Field / Sand | Show or hide the vibration field or the sand. |
 | Reset sand | Scatter the sand evenly again. |
 | Colormap | Colour scheme of the field: inferno, magma, plasma, viridis, cividis, turbo, twilight, coolwarm, ocean, bone or gray. Screenshots and videos use it too. |
+| Sand colour | Swatch button that opens a colour picker for the grains. Screenshots and videos use it too. |
 | Quality | Resolution the vibration field is computed at: Full, 1/2 or 1/4 of the plate's size on screen. Lower settings are smoothly scaled up, and sand is always drawn at full resolution. Lower it if sliders or LFOs feel slow. |
 | Pause / Resume | Freeze the sand. The field still updates when you change settings. |
 | Screenshot | Save the plot area as a PNG to `renders/`. |

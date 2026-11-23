@@ -30,6 +30,7 @@ Controls
     click plate    move the exciter (updates the x / y controls; breaks symmetry)
     Reset sand     scatter the sand uniformly again
     Colormap       colour scheme of the field (also used in screenshots / videos)
+    Sand colour    swatch button: pick the grain colour
     Quality        field resolution relative to the plate's on-screen pixel size
                    (upscaled bilinearly; sand is always drawn at full resolution)
     Pause          freeze the sand (the field still follows parameter edits)
@@ -93,7 +94,7 @@ POOL = ThreadPoolExecutor(max_workers=6)
 # 4-byte gather and pasting into the Agg buffer is a plain copy.
 COLORMAPS = ["inferno", "magma", "plasma", "viridis", "cividis", "turbo",
              "twilight", "coolwarm", "ocean", "bone", "gray"]
-SAND_RGB = np.array(mpl.colors.to_rgb("#f3e3c0"), np.float32) * 255
+SAND_COLOR = "#f3e3c0"
 EMPTY_RGBA = np.array([*np.round(np.array(mpl.colors.to_rgb("#0b0b0b")) * 255), 255],
                       np.uint8).view(np.uint32)[0]
 
@@ -385,17 +386,19 @@ def field_rgba(amp, cmap):
     return np.full(amp.shape, EMPTY_RGBA)
 
 
-def compose(base, sand, show_sand):
-    """*base* (field_rgba) with the sand splatted on top; only sandy pixels are blended."""
+def compose(base, sand, sand_color):
+    """*base* (field_rgba) with the sand (colour *sand_color*, None hides it) splatted on top;
+    only sandy pixels are blended."""
     rgba = base.copy()
-    if show_sand:
+    if sand_color:
+        sand_rgb = np.array(mpl.colors.to_rgb(sand_color), np.float32) * 255
         ny, nx = base.shape
         idx = sand_pixels(sand, nx, ny)
         pix, counts = np.unique(idx[:, 1] * nx + idx[:, 0], return_counts=True)
         alpha = np.minimum(counts * np.float32(0.6), 1.0)[:, None]
         flat = rgba.reshape(-1).view(np.uint8).reshape(-1, 4)
         under = flat[pix, :3].astype(np.float32)
-        flat[pix, :3] = under + (SAND_RGB - under) * alpha
+        flat[pix, :3] = under + (sand_rgb - under) * alpha
     return rgba
 
 
@@ -464,6 +467,7 @@ class Chladni:
         self.show_field = True           # read live by the worker
         self.cmap = COLORMAPS[0]
         self.show_sand = True
+        self.sand_color = SAND_COLOR
         self.quality = 1.0
         self.capture_cross = True
         self._render_size = (GRID, GRID) # computed image (nx, ny): plate pixels x quality
@@ -545,7 +549,7 @@ class Chladni:
                 sand = step_sand(sand, amp, self.shake * step_scale, rng)
                 self._sand = sand
             frame_id += 1
-            self._frame = (frame_id, compose(base, sand, self.show_sand))
+            self._frame = (frame_id, compose(base, sand, self.sand_color if self.show_sand else None))
 
             next_t += dt
             delay = next_t - time.perf_counter()
@@ -656,6 +660,13 @@ class Chladni:
         self.cmb_cmap.currentTextChanged.connect(lambda name: setattr(self, "cmap", name))
         row.addWidget(QtWidgets.QLabel("Colormap"))
         row.addWidget(self.cmb_cmap)
+        self.btn_sand_color = QtWidgets.QPushButton()
+        self.btn_sand_color.setToolTip("Sand colour")
+        self.btn_sand_color.setFixedWidth(40)
+        self.btn_sand_color.clicked.connect(self._pick_sand_color)
+        self._set_sand_color(self.sand_color)
+        row.addWidget(QtWidgets.QLabel("Sand colour"))
+        row.addWidget(self.btn_sand_color)
         row.addStretch()
         grid.addLayout(row, 4, 0, 1, 3)
         row = QtWidgets.QHBoxLayout()
@@ -781,6 +792,15 @@ class Chladni:
         self._plate_px = (w, h)
         self._render_size = (max(8, round(w * self.quality)), max(8, round(h * self.quality)))
 
+    def _pick_sand_color(self):
+        color = QtWidgets.QColorDialog.getColor(QtGui.QColor(self.sand_color), self.window, "Sand colour")
+        if color.isValid():
+            self._set_sand_color(color.name())
+
+    def _set_sand_color(self, color):
+        self.sand_color = color                     # read live by the worker
+        self.btn_sand_color.setStyleSheet(f"background: {color}; border: 1px solid #777;")
+
     def _set_paused(self, paused):
         self.paused = paused
         self.btn_pause.setText("Resume" if paused else "Pause")
@@ -842,11 +862,12 @@ class Chladni:
             state = apply_lfos(self._state(), lfos, 0.0)   # LFO'd values back at their centres
         size_cm = (state["width_cm"], state["height_cm"])
         args = (state, lfos, self._sand, size_cm, self.ax_plate.get_title(),
-                self.cmap if self.show_field else None, self.show_sand, self.capture_cross, duration)
+                self.cmap if self.show_field else None,
+                self.sand_color if self.show_sand else None, self.capture_cross, duration)
         self._export_thread = threading.Thread(target=self._export, args=args, daemon=True)
         self._export_thread.start()
 
-    def _export(self, state, lfos, sand, size_cm, title, cmap, show_sand, show_cross, duration):
+    def _export(self, state, lfos, sand, size_cm, title, cmap, sand_color, show_cross, duration):
         """Re-run the simulation offline on a private Agg figure and write a video.
 
         LFOs restart at phase 0. Modulated plate size changes the physics only;
@@ -932,7 +953,7 @@ class Chladni:
                         carry -= 1.0
                     clock.set_text(f"t = {frame / VIDEO_FPS:5.2f} s")
                     fig.canvas.restore_region(bg)
-                    paste(fig.canvas, rect, compose(base, sand, show_sand))
+                    paste(fig.canvas, rect, compose(base, sand, sand_color))
                     for artist in (*ax.spines.values(), mark, clock):
                         ax.draw_artist(artist)
                     rgba = fig.canvas.buffer_rgba()
