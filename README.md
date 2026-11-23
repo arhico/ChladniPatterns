@@ -2,17 +2,35 @@
 
 An interactive Chladni plate simulator. A rectangular plate with real dimensions and a real material is driven at one point by up to four sine generators. Sand on the plate drifts away from the vibrating regions and collects on the nodal lines, as it does on a real plate.
 
+![Interface](/docs/chnadni_interface.png)
+
 Mode frequencies follow Kirchhoff plate theory, with free-edge-like cosine mode shapes:
 
-```
-f_mn = (π/2) · sqrt(D / (ρh)) · ((m/Lx)² + (n/Ly)²),   D = E h³ / (12 (1 − ν²))
-```
+$$
+f_{mn} = \frac{\pi}{2} \sqrt{\frac{D}{\rho h}} \left[ \left(\frac{m}{L_x}\right)^2 + \left(\frac{n}{L_y}\right)^2 \right],
+\qquad D = \frac{E h^3}{12\,(1 - \nu^2)}
+$$
+
+where:
+
+- $f_{mn}$: natural frequency (Hz) of mode $(m, n)$
+- $m, n$: mode indices, the number of half-waves along the $x$ and $y$ axes ($0, 1, 2, \dots$)
+- $L_x, L_y$: plate side lengths (m)
+- $h$: plate thickness (m)
+- $\rho$: material density (kg/m³), so $\rho h$ is the mass per unit area
+- $E$: Young's modulus of the material (Pa)
+- $\nu$: Poisson's ratio of the material (dimensionless)
+- $D$: flexural rigidity, the plate's resistance to bending (N·m)
+
+![Chladni render with lfo on oscillator frequency](docs/chladni_20261123_175851.gif)
+
+![Chladni render with lfo on oscillator frequency](docs/chladni_20261123_185440.gif)
 
 ## Requirements
 
 - Python 3.10+
 - `numpy`, `matplotlib`, `PySide6-Essentials` (see `requirements.txt`)
-- `ffmpeg` on PATH, for MP4 export. Without it, videos are saved as GIFs, which needs Pillow.
+- `ffmpeg` on PATH, for MP4 export. Without it, only GIF export (via Pillow) is available.
 
 ## Run
 
@@ -34,11 +52,12 @@ python ChladniPatterns.py
 | Reset sand | Scatter the sand evenly again. |
 | Colormap | Colour scheme of the field: inferno, magma, plasma, viridis, cividis, turbo, twilight, coolwarm, ocean, bone or gray. Screenshots and videos use it too. |
 | Sand colour | Swatch button that opens a colour picker for the grains. Screenshots and videos use it too. |
-| Quality | Resolution the vibration field is computed at: Full, 1/2 or 1/4 of the plate's size on screen. Lower settings are smoothly scaled up, and sand is always drawn at full resolution. Lower it if sliders or LFOs feel slow. |
-| Pause / Resume | Freeze the sand. The field still updates when you change settings. |
+| **View** Quality | Resolution the vibration field is computed at: Full, 1/2 or 1/4 of the plate's size on screen. Lower settings are smoothly scaled up, and sand is always drawn at full resolution. Lower it if sliders or LFOs feel slow. |
+| Pause / Resume | Freeze the sand and the LFOs. The field still updates when you change settings. |
 | Screenshot | Save the plot area as a PNG to `renders/`. |
 | Cross in captures | Choose whether screenshots and videos show the exciter cross. |
-| **Video** Length + Render video | Simulate the current setup for the chosen length, starting from the current sand, and save an MP4 to `renders/`. |
+| **Video** Length + Render video | Simulate the current setup for the chosen length, starting from the current sand, and save it to `renders/`. |
+| Format | MP4 (needs ffmpeg) or GIF. Without ffmpeg, MP4 is disabled and a warning is shown. |
 | `~` (next to each slider) | LFO. Click it to turn it on or off. The arrow sets Rate (Hz) and Depth (± % of the slider's range). The slider sets the centre value the LFO swings around. |
 
 Starting a render resumes a paused simulation and restarts every LFO at phase 0, both on screen and in the video. Plate-size LFOs change the physics in the video, but the video keeps the plate's base dimensions.

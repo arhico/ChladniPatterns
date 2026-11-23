@@ -33,13 +33,15 @@ Controls
     Sand colour    swatch button: pick the grain colour
     Quality        field resolution relative to the plate's on-screen pixel size
                    (upscaled bilinearly; sand is always drawn at full resolution)
-    Pause          freeze the sand (the field still follows parameter edits)
+    Pause          freeze the sand and the LFOs (the field still follows edits)
     Screenshot     save the current plot area as a PNG to renders/
     Cross in captures   draw the exciter cross in screenshots and videos
     Render video   simulate the current setup for the chosen length (starting
                    from the current sand) and save it to renders/; resumes a
                    paused simulation and retriggers all LFOs (phase 0) both live
                    and in the video, so what you see is what gets recorded
+    Format         MP4 (needs ffmpeg on PATH; disabled with a warning if missing)
+                   or GIF (via Pillow)
 """
 import os
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")   # we parallelise ourselves (POOL)
@@ -591,8 +593,13 @@ class Chladni:
                           for f, c in zip(self.freqs, GEN_COLORS)]
 
         # ---- control panel (native Qt widgets)
+        # Two columns: what vibrates (sound + plate) | what you see (sand, view, output)
         panel = QtWidgets.QWidget()
-        vbox = QtWidgets.QVBoxLayout(panel)
+        hbox = QtWidgets.QHBoxLayout(panel)
+        cols = [QtWidgets.QVBoxLayout(), QtWidgets.QVBoxLayout()]
+        for col in cols:
+            hbox.addLayout(col, 1)
+        vbox = cols[0]
 
         def group(title):
             box = QtWidgets.QGroupBox(title)
@@ -640,6 +647,8 @@ class Chladni:
         self.c_drive_y = ValueControl(grid, 1, "y [cm]", 0, self.height_cm, self.drive[1] * self.height_cm,
                                       0.1, 2, CYAN, lambda v: self._set_drive(y=v / self.height_cm))
 
+        vbox.addStretch()
+        vbox = cols[1]
         grid = group("Sand")
         self.c_shake = ValueControl(grid, 0, "Shake", 0.1, 3.0, self.shake, 0.05, 2, GREY,
                                     lambda v: setattr(self, "shake", v))   # read live by the worker
@@ -668,7 +677,9 @@ class Chladni:
         row.addWidget(QtWidgets.QLabel("Sand colour"))
         row.addWidget(self.btn_sand_color)
         row.addStretch()
-        grid.addLayout(row, 4, 0, 1, 3)
+        grid.addLayout(row, 2, 0, 1, 3)
+
+        grid = group("View")
         row = QtWidgets.QHBoxLayout()
         self.cmb_quality = QtWidgets.QComboBox()
         self.cmb_quality.addItems(list(QUALITY))
@@ -683,12 +694,12 @@ class Chladni:
         btn_shot.clicked.connect(self._screenshot)
         row.addWidget(self.btn_pause)
         row.addWidget(btn_shot)
-        grid.addLayout(row, 2, 0, 1, 3)
+        grid.addLayout(row, 0, 0, 1, 3)
         check = QtWidgets.QCheckBox("Cross in captures")
         check.setChecked(True)
         check.setToolTip("Draw the exciter cross in screenshots and videos")
         check.toggled.connect(lambda on: setattr(self, "capture_cross", on))
-        grid.addWidget(check, 3, 0, 1, 3)
+        grid.addWidget(check, 1, 0, 1, 3)
 
         grid = group("Video")
         self.spin_duration = QtWidgets.QDoubleSpinBox()
@@ -696,6 +707,12 @@ class Chladni:
         self.spin_duration.setDecimals(1)
         self.spin_duration.setValue(10)
         self.spin_duration.setSuffix(" s")
+        self.cmb_format = QtWidgets.QComboBox()
+        self.cmb_format.addItems(["MP4", "GIF"])
+        has_ffmpeg = shutil.which("ffmpeg") is not None
+        if not has_ffmpeg:                        # MP4 needs ffmpeg: offer GIF only
+            self.cmb_format.model().item(0).setEnabled(False)
+            self.cmb_format.setCurrentText("GIF")
         btn_render = QtWidgets.QPushButton("Render video")
         btn_render.clicked.connect(self._start_export)
         self.export_label = QtWidgets.QLabel("")
@@ -704,7 +721,14 @@ class Chladni:
         grid.addWidget(QtWidgets.QLabel("Length"), 0, 0)
         grid.addWidget(self.spin_duration, 0, 1)
         grid.addWidget(btn_render, 0, 2)
-        grid.addWidget(self.export_label, 1, 0, 1, 3)
+        grid.addWidget(QtWidgets.QLabel("Format"), 1, 0)
+        grid.addWidget(self.cmb_format, 1, 1)
+        if not has_ffmpeg:
+            warn = QtWidgets.QLabel("ffmpeg not found on PATH: MP4 unavailable, rendering GIF.")
+            warn.setStyleSheet("color: #ffb74d;")
+            warn.setWordWrap(True)
+            grid.addWidget(warn, 2, 0, 1, 3)
+        grid.addWidget(self.export_label, 3, 0, 1, 3)
         vbox.addStretch()
         self.controls = [*self.f_controls, *self.a_controls, self.c_width, self.c_height,
                          self.c_thick, self.c_zeta, self.c_drive_x, self.c_drive_y, self.c_shake]
@@ -863,11 +887,12 @@ class Chladni:
         size_cm = (state["width_cm"], state["height_cm"])
         args = (state, lfos, self._sand, size_cm, self.ax_plate.get_title(),
                 self.cmap if self.show_field else None,
-                self.sand_color if self.show_sand else None, self.capture_cross, duration)
+                self.sand_color if self.show_sand else None, self.capture_cross, duration,
+                self.cmb_format.currentText() == "GIF")
         self._export_thread = threading.Thread(target=self._export, args=args, daemon=True)
         self._export_thread.start()
 
-    def _export(self, state, lfos, sand, size_cm, title, cmap, sand_color, show_cross, duration):
+    def _export(self, state, lfos, sand, size_cm, title, cmap, sand_color, show_cross, duration, gif):
         """Re-run the simulation offline on a private Agg figure and write a video.
 
         LFOs restart at phase 0. Modulated plate size changes the physics only;
@@ -918,7 +943,7 @@ class Chladni:
 
             VIDEO_DIR.mkdir(exist_ok=True)
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            ffmpeg = shutil.which("ffmpeg")
+            ffmpeg = None if gif else shutil.which("ffmpeg")
             if ffmpeg:
                 path = VIDEO_DIR / f"chladni_{stamp}.mp4"
                 proc = subprocess.Popen(
@@ -926,7 +951,7 @@ class Chladni:
                      "-s", f"{px_w}x{px_h}", "-r", str(VIDEO_FPS), "-i", "-",
                      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", str(path)],
                     stdin=subprocess.PIPE)
-            else:                                # no ffmpeg: fall back to a GIF via Pillow
+            else:                                # GIF chosen (or no ffmpeg): Pillow
                 from PIL import Image
                 path = VIDEO_DIR / f"chladni_{stamp}.gif"
                 proc, gif_frames = None, []
@@ -1005,8 +1030,9 @@ class Chladni:
     def _tick(self):
         now = time.perf_counter()
         dt, self._last_tick = min(now - self._last_tick, 0.1), now
-        for control in self.controls:
-            control.lfo_step(dt)
+        if not self.paused:                            # pause freezes the LFOs too
+            for control in self.controls:
+                control.lfo_step(dt)
 
         res = self._result
         if res is not None and res[0] != self._shown:
